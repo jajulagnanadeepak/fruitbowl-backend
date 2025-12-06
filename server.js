@@ -42,11 +42,25 @@ if (!process.env.MAIL_USER || !process.env.MAIL_PASS || !process.env.MAIL_TO) {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 🟢 CORS — set ALL allowed origins here
+// -----------------------------------------
+// 🟢 FIX: Render + Postman CORS (FULL UNLOCK)
+// -----------------------------------------
 app.use(cors({
-  origin: "*", 
-  methods: ["GET", "POST", "DELETE"],
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Accept",
+    "User-Agent",
+    "Origin",
+    "X-Requested-With"
+  ],
+  credentials: false
 }));
+
+// Handle OPTIONS preflight for ALL routes
+app.options("*", cors());
 
 // -----------------------------------------
 // Database Connection
@@ -56,7 +70,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error("MongoDB connection error:", err));
 
 // -----------------------------------------
-// 🟢 Test Route (super important for Render)
+// Test Route
 // -----------------------------------------
 app.get("/", (req, res) => {
   res.send("SD Fruits Bowl API is running ✅");
@@ -78,10 +92,9 @@ app.post('/api/register', async (req, res) => {
       return res.status(409).json({ message: "User already exists" });
     }
 
-    // Hash password
     const hashed = await bcrypt.hash(password, 10);
-
     await new User({ phoneNumber, password: hashed }).save();
+
     res.status(201).json({ success: true, message: "User registered successfully" });
 
   } catch (err) {
@@ -101,6 +114,7 @@ app.post('/api/login', async (req, res) => {
 
   try {
     const user = await User.findOne({ phoneNumber });
+
     if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -145,13 +159,12 @@ app.delete('/api/delete-user', async (req, res) => {
 });
 
 // -----------------------------------------
-// FEEDBACK ROUTE — Save + Send Email
+// FEEDBACK ROUTE
 // -----------------------------------------
 app.post('/api/feedback', async (req, res) => {
   try {
     const { fullName, location, subject, rating, message, date } = req.body;
 
-    // Validate fields
     if (!fullName || !location || !subject || !rating || !message || !date) {
       return res.status(400).json({
         success: false,
@@ -182,7 +195,6 @@ app.post('/api/feedback', async (req, res) => {
       });
     }
 
-    // Save to database
     await new Feedback({
       fullName: fullName.trim(),
       location: location.trim(),
@@ -192,9 +204,7 @@ app.post('/api/feedback', async (req, res) => {
       date: date.trim()
     }).save();
 
-    // -----------------------------------------
-    // SEND EMAIL (optional)
-    // -----------------------------------------
+    // Optional Email Sending
     let emailSent = false;
 
     if (process.env.MAIL_USER && process.env.MAIL_PASS && process.env.MAIL_TO) {
@@ -227,7 +237,6 @@ app.post('/api/feedback', async (req, res) => {
         });
 
         emailSent = true;
-
       } catch (emailError) {
         console.error("Email Error:", emailError.message);
       }
