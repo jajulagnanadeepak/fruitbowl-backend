@@ -1,262 +1,181 @@
 // Load environment variables
-require('dotenv').config();
+require("dotenv").config();
 
-const express = require('express');
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const cors = require('cors');
-const nodemailer = require('nodemailer');
+const express = require("express");
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const cors = require("cors");
+const nodemailer = require("nodemailer");
 
 // Models
-const User = require('./models/user');
-const Feedback = require('./models/feedback');
+const User = require("./models/user");
+const Feedback = require("./models/feedback");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// -----------------------------------------
-// ✅ Validate required .env variables
-// -----------------------------------------
-const JWT_SECRET = process.env.JWT_SECRET;
-const MONGO_URI = process.env.MONGO_URI;
+// Fix Render routing & security warnings
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
 
-if (!JWT_SECRET) {
-  console.error("❌ ERROR: JWT_SECRET is not set in .env file");
-  process.exit(1);
-}
+// CORS (Render + Postman Safe)
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "User-Agent",
+      "Origin",
+      "X-Requested-With",
+    ],
+    credentials: false,
+  })
+);
 
-if (!MONGO_URI) {
-  console.error("❌ ERROR: MONGO_URI is not set in .env file");
-  process.exit(1);
-}
+// Handle preflight
+app.options("*", cors());
 
-// Optional Email Config
-if (!process.env.MAIL_USER || !process.env.MAIL_PASS || !process.env.MAIL_TO) {
-  console.warn("⚠️ WARNING: Email config missing (.env MAIL_USER, MAIL_PASS, MAIL_TO)");
-}
-
-// -----------------------------------------
-// Middleware
-// -----------------------------------------
+// Body parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// -----------------------------------------
-// 🟢 FIX: Render + Postman CORS (FULL UNLOCK)
-// -----------------------------------------
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Accept",
-    "User-Agent",
-    "Origin",
-    "X-Requested-With"
-  ],
-  credentials: false
-}));
+// Validate ENV
+if (!process.env.JWT_SECRET) {
+  console.error("❌ ERROR: Missing JWT_SECRET");
+  process.exit(1);
+}
 
-// Handle OPTIONS preflight for ALL routes
-app.options("*", cors());
+if (!process.env.MONGO_URI) {
+  console.error("❌ ERROR: Missing MONGO_URI");
+  process.exit(1);
+}
 
-// -----------------------------------------
-// Database Connection
-// -----------------------------------------
-mongoose.connect(MONGO_URI)
-  .then(() => console.log("MongoDB connected successfully"))
-  .catch(err => console.error("MongoDB connection error:", err));
+// MongoDB Connection
+mongoose
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  })
+  .then(() => console.log("MongoDB Connected"))
+  .catch((err) => console.error("MongoDB Error:", err));
 
-// -----------------------------------------
-// Test Route
-// -----------------------------------------
+// Health check for Render
 app.get("/", (req, res) => {
-  res.send("SD Fruits Bowl API is running ✅");
+  res.send("SD Fruits Bowl API is running 👍");
 });
 
-// -----------------------------------------
-// REGISTER
-// -----------------------------------------
-app.post('/api/register', async (req, res) => {
-  const { phoneNumber, password } = req.body;
-
-  if (!phoneNumber || !password) {
-    return res.status(400).json({ message: "Phone number and password required" });
-  }
-
+// --------------------- REGISTER -----------------------
+app.post("/api/register", async (req, res) => {
   try {
+    const { phoneNumber, password } = req.body;
+
+    if (!phoneNumber || !password)
+      return res
+        .status(400)
+        .json({ message: "Phone number and password required" });
+
     const exists = await User.findOne({ phoneNumber });
-    if (exists) {
+    if (exists)
       return res.status(409).json({ message: "User already exists" });
-    }
 
     const hashed = await bcrypt.hash(password, 10);
+
     await new User({ phoneNumber, password: hashed }).save();
-
-    res.status(201).json({ success: true, message: "User registered successfully" });
-
+    res
+      .status(201)
+      .json({ success: true, message: "User registered successfully" });
   } catch (err) {
-    res.status(500).json({ message: "Registration failed", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Registration failed", error: err.message });
   }
 });
 
-// -----------------------------------------
-// LOGIN
-// -----------------------------------------
-app.post('/api/login', async (req, res) => {
-  const { phoneNumber, password } = req.body;
-
-  if (!phoneNumber || !password) {
-    return res.status(400).json({ message: "Phone number and password required" });
-  }
-
+// --------------------- LOGIN -----------------------
+app.post("/api/login", async (req, res) => {
   try {
+    const { phoneNumber, password } = req.body;
+
+    if (!phoneNumber || !password)
+      return res
+        .status(400)
+        .json({ message: "Phone number and password required" });
+
     const user = await User.findOne({ phoneNumber });
+    if (!user)
+      return res.status(401).json({ message: "Invalid credentials" });
 
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid)
+      return res.status(401).json({ message: "Invalid credentials" });
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
-
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "1h" });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
 
     res.json({
       success: true,
-      message: "Login successful",
       token,
-      userId: user._id
+      message: "Login successful",
+      userId: user._id,
     });
-
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
-// -----------------------------------------
-// DELETE USER
-// -----------------------------------------
-app.delete('/api/delete-user', async (req, res) => {
-  const { phoneNumber } = req.body;
-
-  if (!phoneNumber) {
-    return res.status(400).json({ message: "Phone number required" });
-  }
-
+// --------------------- DELETE USER -----------------------
+app.delete("/api/delete-user", async (req, res) => {
   try {
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber)
+      return res.status(400).json({ message: "Phone number required" });
+
     const result = await User.deleteOne({ phoneNumber });
 
-    if (result.deletedCount === 0) {
+    if (result.deletedCount === 0)
       return res.status(404).json({ message: "User not found" });
-    }
 
     res.json({ success: true, message: "User deleted successfully" });
-
   } catch (err) {
     res.status(500).json({ message: "Deletion failed", error: err.message });
   }
 });
 
-// -----------------------------------------
-// FEEDBACK ROUTE
-// -----------------------------------------
-app.post('/api/feedback', async (req, res) => {
+// ----------------------- FEEDBACK -----------------------
+app.post("/api/feedback", async (req, res) => {
   try {
     const { fullName, location, subject, rating, message, date } = req.body;
 
     if (!fullName || !location || !subject || !rating || !message || !date) {
-      return res.status(400).json({
-        success: false,
-        message: "All fields are required"
-      });
-    }
-
-    const allowedSubjects = ['Complaints', 'Suggestions', 'Enquiry', 'General', 'Compliment'];
-    const normalized = subject.trim();
-
-    const validSubject = allowedSubjects.find(
-      s => s.toLowerCase() === normalized.toLowerCase()
-    );
-
-    if (!validSubject) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid subject. Allowed: ${allowedSubjects.join(', ')}`,
-        received: normalized
-      });
-    }
-
-    const ratingNum = Number(rating);
-    if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
-      return res.status(400).json({
-        success: false,
-        message: "Rating must be 1–5"
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields required" });
     }
 
     await new Feedback({
-      fullName: fullName.trim(),
-      location: location.trim(),
-      subject: validSubject,
-      rating: ratingNum,
-      message: message.trim(),
-      date: date.trim()
+      fullName,
+      location,
+      subject,
+      rating,
+      message,
+      date,
     }).save();
 
-    // Optional Email Sending
-    let emailSent = false;
-
-    if (process.env.MAIL_USER && process.env.MAIL_PASS && process.env.MAIL_TO) {
-      try {
-        const transporter = nodemailer.createTransport({
-          service: "gmail",
-          auth: {
-            user: process.env.MAIL_USER.trim(),
-            pass: process.env.MAIL_PASS.trim(),
-          },
-        });
-
-        await transporter.verify();
-
-        const htmlTemplate = `
-          <h2>New Feedback Received</h2>
-          <p><b>Name:</b> ${fullName}</p>
-          <p><b>Location:</b> ${location}</p>
-          <p><b>Subject:</b> ${validSubject}</p>
-          <p><b>Rating:</b> ${ratingNum}</p>
-          <p><b>Message:</b> ${message}</p>
-          <p><b>Date:</b> ${date}</p>
-        `;
-
-        await transporter.sendMail({
-          from: process.env.MAIL_USER,
-          to: process.env.MAIL_TO,
-          subject: `New Feedback from ${fullName}`,
-          html: htmlTemplate
-        });
-
-        emailSent = true;
-      } catch (emailError) {
-        console.error("Email Error:", emailError.message);
-      }
-    }
-
-    res.json({
-      success: true,
-      message: emailSent ? "Feedback saved & email sent" : "Feedback saved",
-      emailSent
-    });
-
-  } catch (error) {
-    console.error("Feedback Error:", error);
-    res.status(500).json({ success: false, message: "Feedback failed", error: error.message });
+    res.json({ success: true, message: "Feedback saved" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// -----------------------------------------
-// Start Server
-// -----------------------------------------
-app.listen(PORT, () => {
-  console.log(`Authentication Server running on ${PORT}`);
-});
+// ❗️IMPORTANT: DO NOT ADD app.get("*") or any wildcard here!!
+
+// Start server
+app.listen(PORT, () =>
+  console.log(`Server running on port ${PORT}`)
+);
