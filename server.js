@@ -15,11 +15,11 @@ const Feedback = require("./models/feedback");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Fix Render routing & security warnings
+// Security & Render fixes
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
-// CORS (Render + Postman Safe)
+// ---------------- CORS FIX (Express v5 Safe) ----------------
 app.use(
   cors({
     origin: "*",
@@ -36,14 +36,14 @@ app.use(
   })
 );
 
-// Handle preflight
-app.options("*", cors());
+// ❌ DELETE THIS — causes Express v5 crash
+// app.options("(.*)", cors());
 
-// Body parsing
+// Body Parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Validate ENV
+// Validate env variables
 if (!process.env.JWT_SECRET) {
   console.error("❌ ERROR: Missing JWT_SECRET");
   process.exit(1);
@@ -63,12 +63,12 @@ mongoose
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.error("MongoDB Error:", err));
 
-// Health check for Render
+// Health Check
 app.get("/", (req, res) => {
   res.send("SD Fruits Bowl API is running 👍");
 });
 
-// --------------------- REGISTER -----------------------
+// ---------------- REGISTER ----------------
 app.post("/api/register", async (req, res) => {
   try {
     const { phoneNumber, password } = req.body;
@@ -95,7 +95,7 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
-// --------------------- LOGIN -----------------------
+// ---------------- LOGIN ----------------
 app.post("/api/login", async (req, res) => {
   try {
     const { phoneNumber, password } = req.body;
@@ -128,7 +128,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// --------------------- DELETE USER -----------------------
+// ---------------- DELETE USER ----------------
 app.delete("/api/delete-user", async (req, res) => {
   try {
     const { phoneNumber } = req.body;
@@ -147,7 +147,7 @@ app.delete("/api/delete-user", async (req, res) => {
   }
 });
 
-// ----------------------- FEEDBACK -----------------------
+// ---------------- FEEDBACK ----------------
 app.post("/api/feedback", async (req, res) => {
   try {
     const { fullName, location, subject, rating, message, date } = req.body;
@@ -173,9 +173,7 @@ app.post("/api/feedback", async (req, res) => {
   }
 });
 
-// ❗️IMPORTANT: DO NOT ADD app.get("*") or any wildcard here!!
-
-// Start server
+// ---------------- Start Server ----------------
 app.listen(PORT, () =>
   console.log(`Server running on port ${PORT}`)
 );
