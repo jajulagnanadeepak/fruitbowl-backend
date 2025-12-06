@@ -3,67 +3,44 @@ require("dotenv").config();
 
 const express = require("express");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
-
-// Models
 const User = require("./models/user");
 const Feedback = require("./models/feedback");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Security & Render fixes
+// Basic security
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
-// ---------------- CORS FIX (Express v5 Safe) ----------------
+// CORS (safe for Render + Postman)
 app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Accept",
-      "User-Agent",
-      "Origin",
-      "X-Requested-With",
-    ],
-    credentials: false,
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-
-// ❌ DELETE THIS — causes Express v5 crash
-// app.options("(.*)", cors());
 
 // Body Parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Validate env variables
-if (!process.env.JWT_SECRET) {
-  console.error("❌ ERROR: Missing JWT_SECRET");
-  process.exit(1);
-}
-
-if (!process.env.MONGO_URI) {
-  console.error("❌ ERROR: Missing MONGO_URI");
+// Validate ENV
+if (!process.env.JWT_SECRET || !process.env.MONGO_URI) {
+  console.error("❌ Missing environment variables");
   process.exit(1);
 }
 
 // MongoDB Connection
 mongoose
-  .connect(process.env.MONGO_URI, {
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-  })
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.error("MongoDB Error:", err));
 
-// Health Check
+// Health check
 app.get("/", (req, res) => {
   res.send("SD Fruits Bowl API is running 👍");
 });
@@ -71,58 +48,45 @@ app.get("/", (req, res) => {
 // ---------------- REGISTER ----------------
 app.post("/api/register", async (req, res) => {
   try {
-    const { phoneNumber, password } = req.body;
+    let { phoneNumber, password } = req.body;
+
+    phoneNumber = String(phoneNumber); // FIX #1
 
     if (!phoneNumber || !password)
-      return res
-        .status(400)
-        .json({ message: "Phone number and password required" });
+      return res.status(400).json({ message: "Phone number and password required" });
 
     const exists = await User.findOne({ phoneNumber });
     if (exists)
       return res.status(409).json({ message: "User already exists" });
 
-    const hashed = await bcrypt.hash(password, 10);
+    // Schema will hash password automatically
+    const user = new User({ phoneNumber, password });
+    await user.save();
 
-    await new User({ phoneNumber, password: hashed }).save();
-    res
-      .status(201)
-      .json({ success: true, message: "User registered successfully" });
+    res.status(201).json({ success: true, message: "User registered successfully" });
+
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Registration failed", error: err.message });
+    res.status(500).json({ message: "Registration failed", error: err.message });
   }
 });
 
 // ---------------- LOGIN ----------------
 app.post("/api/login", async (req, res) => {
   try {
-    const { phoneNumber, password } = req.body;
+    let { phoneNumber, password } = req.body;
 
-    if (!phoneNumber || !password)
-      return res
-        .status(400)
-        .json({ message: "Phone number and password required" });
+    phoneNumber = String(phoneNumber); // FIX #2
 
     const user = await User.findOne({ phoneNumber });
-    if (!user)
-      return res.status(401).json({ message: "Invalid credentials" });
+    if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid)
-      return res.status(401).json({ message: "Invalid credentials" });
+    const match = await user.matchPassword(password); // FIX #3
+    if (!match) return res.status(401).json({ message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
-    });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-    res.json({
-      success: true,
-      token,
-      message: "Login successful",
-      userId: user._id,
-    });
+    res.json({ success: true, token, message: "Login successful", userId: user._id });
+
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -133,15 +97,13 @@ app.delete("/api/delete-user", async (req, res) => {
   try {
     const { phoneNumber } = req.body;
 
-    if (!phoneNumber)
-      return res.status(400).json({ message: "Phone number required" });
-
-    const result = await User.deleteOne({ phoneNumber });
+    const result = await User.deleteOne({ phoneNumber: String(phoneNumber) });
 
     if (result.deletedCount === 0)
       return res.status(404).json({ message: "User not found" });
 
     res.json({ success: true, message: "User deleted successfully" });
+
   } catch (err) {
     res.status(500).json({ message: "Deletion failed", error: err.message });
   }
@@ -152,11 +114,8 @@ app.post("/api/feedback", async (req, res) => {
   try {
     const { fullName, location, subject, rating, message, date } = req.body;
 
-    if (!fullName || !location || !subject || !rating || !message || !date) {
-      return res
-        .status(400)
-        .json({ success: false, message: "All fields required" });
-    }
+    if (!fullName || !location || !subject || !rating || !message || !date)
+      return res.status(400).json({ success: false, message: "All fields required" });
 
     await new Feedback({
       fullName,
@@ -168,12 +127,11 @@ app.post("/api/feedback", async (req, res) => {
     }).save();
 
     res.json({ success: true, message: "Feedback saved" });
+
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ---------------- Start Server ----------------
-app.listen(PORT, () =>
-  console.log(`Server running on port ${PORT}`)
-);
+// Start server
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
